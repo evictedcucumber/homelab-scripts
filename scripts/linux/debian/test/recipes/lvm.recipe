@@ -1,0 +1,120 @@
+unencrypted-lvm ::
+
+    512 512 512 fat32
+        $iflabel{ gpt }
+        $reusemethod{ }
+        method{ efi }
+        format{ }
+    .
+
+    1024 1024 1024 ext4
+        $primary{ }
+        $bootable{ }
+        method{ format }
+        format{ }
+        use_filesystem{ }
+        filesystem{ ext4 }
+        mountpoint{ /boot }
+    .
+
+    1 1 -1 ext4
+        $defaultignore{ }
+        method{ lvm }
+        vg_name{ vg0 }
+    .
+
+    32768 32768 32768 ext4
+        $lvmok{ }
+        in_vg{ vg0 }
+        lv_name{ root }
+        method{ format }
+        format{ }
+        use_filesystem{ }
+        filesystem{ ext4 }
+        mountpoint{ / }
+    .
+
+    16384 16384 16384 linux-swap
+        $lvmok{ }
+        in_vg{ vg0 }
+        lv_name{ swap }
+        method{ swap }
+        format{ }
+    .
+
+    40960 40960 40960 ext4
+        $lvmok{ }
+        in_vg{ vg0 }
+        lv_name{ var }
+        method{ format }
+        format{ }
+        use_filesystem{ }
+        filesystem{ ext4 }
+        mountpoint{ /var }
+    .
+
+    10240 10240 10240 ext4
+        $lvmok{ }
+        in_vg{ vg0 }
+        lv_name{ varlog }
+        method{ format }
+        format{ }
+        use_filesystem{ }
+        filesystem{ ext4 }
+        mountpoint{ /var/log }
+    .
+
+    8192 8192 8192 ext4
+        $lvmok{ }
+        in_vg{ vg0 }
+        lv_name{ audit }
+        method{ format }
+        format{ }
+        use_filesystem{ }
+        filesystem{ ext4 }
+        mountpoint{ /var/log/audit }
+    .
+
+    8192 8192 8192 ext4
+        $lvmok{ }
+        in_vg{ vg0 }
+        lv_name{ tmp }
+        method{ format }
+        format{ }
+        use_filesystem{ }
+        filesystem{ ext4 }
+        mountpoint{ /tmp }
+    .
+
+    8192 8192 8192 ext4
+        $lvmok{ }
+        in_vg{ vg0 }
+        lv_name{ vartmp }
+        method{ format }
+        format{ }
+        use_filesystem{ }
+        filesystem{ ext4 }
+        mountpoint{ /var/tmp }
+    .
+
+    10240 10240 10240 ext4
+        $lvmok{ }
+        in_vg{ vg0 }
+        lv_name{ home }
+        method{ format }
+        format{ }
+        use_filesystem{ }
+        filesystem{ ext4 }
+        mountpoint{ /home }
+    .
+
+    10240 10240 10240 ext4
+        $lvmok{ }
+        in_vg{ vg0 }
+        lv_name{ opt }
+        method{ format }
+        format{ }
+        use_filesystem{ }
+        filesystem{ ext4 }
+        mountpoint{ /opt }
+    .
