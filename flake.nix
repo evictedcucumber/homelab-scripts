@@ -22,7 +22,6 @@
           wget
           xorriso
           rsync
-          cdrtools
         ];
       };
     });
