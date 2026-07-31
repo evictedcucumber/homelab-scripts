@@ -8,7 +8,7 @@
     configuration if it already exists. Intended for running Proxmox VE.
 
 .PARAMETER IsoPath
-    Optional path to an ISO file to mount in the VM's DVD drive.
+    Path to an ISO file to mount in the VM's DVD drive.
 
 .NOTES
     Run in an elevated PowerShell session (Administrator).
@@ -16,6 +16,7 @@
 
 [CmdletBinding(SupportsShouldProcess = $true)]
 param(
+    [Parameter(Mandatory)]
     [string]$IsoPath
 )
 
@@ -39,7 +40,7 @@ $Subnet = "10.0.0.0/24"
 $NatName = "HomelabNAT"
 
 $VMPath = "E:\Hyper-V VMs"
-$VHDDirectory = Join-Path $VMPath "Virtual Hard Disks"
+$VHDDirectory = Join-Path $VMPath "$Name\Virtual Hard Disks"
 $VHDPath = Join-Path $VHDDirectory "$Name.vhdx"
 $VHDSize = 256GB
 
@@ -120,7 +121,9 @@ function Ensure-NetworkSwitch
         }
     }
 
-    $nat = Get-NetNat -Name $NatName -ErrorAction SilentlyContinue
+    $nat = Get-NetNat -ErrorAction SilentlyContinue | Where-Object {
+        $_.Name -eq $NatName -or $_.InternalIPInterfaceAddressPrefix -eq $Subnet
+    }
 
     if (-not $nat)
     {
@@ -134,7 +137,7 @@ function Ensure-NetworkSwitch
     }
     else
     {
-        Write-Host "NAT Network '$NatName' already exists." -ForegroundColor Yellow
+        Write-Host "NAT Network for '$Subnet' already exists ('$($nat.Name)')." -ForegroundColor Yellow
     }
 }
 
@@ -323,12 +326,14 @@ if ($PSCmdlet.ShouldProcess($Name, "Disable Secure Boot"))
 
 if ($EnableTPM)
 {
-    $tpm = Get-VMTPM -VMName $Name -ErrorAction SilentlyContinue
+    $vmSecurity = Get-VMSecurity -VMName $Name -ErrorAction SilentlyContinue
 
-    if (-not $tpm -or -not $tpm.Enabled)
+    if (-not $vmSecurity -or -not $vmSecurity.TpmEnabled)
     {
         if ($PSCmdlet.ShouldProcess($Name, "Enable Virtual TPM"))
         {
+            Write-Host "Enabling Virtual TPM for '$Name'..." -ForegroundColor Cyan
+            Set-VMKeyProtector -VMName $Name -NewLocalKeyProtector
             Enable-VMTPM -VMName $Name
         }
     }
@@ -394,8 +399,8 @@ Get-VM -Name $Name |
 Get-VMProcessor -VMName $Name |
     Select-Object Count, ExposeVirtualizationExtensions
 
-Get-VMTPM -VMName $Name |
-    Select-Object Enabled
+Get-VMSecurity -VMName $Name |
+    Select-Object TpmEnabled
 
 Get-VMIntegrationService -VMName $Name |
     Select-Object Name, Enabled
