@@ -215,11 +215,11 @@ if (-not $targetVm)
 # Memory
 # ---------------------------------------------------------------------
 
-if ($PSCmdlet.ShouldProcess($Name, "Configure Memory ($($MemoryStartup / 1GB) GB Dynamic)"))
+if ($PSCmdlet.ShouldProcess($Name, "Configure Memory ($($MemoryStartup / 1GB) GB Static)"))
 {
     Set-VMMemory `
         -VMName $Name `
-        -DynamicMemoryEnabled $true `
+        -DynamicMemoryEnabled $false `
         -StartupBytes $MemoryStartup
 }
 
@@ -352,6 +352,23 @@ if ($adapter -and $adapter.SwitchName -ne $SwitchName)
         Connect-VMNetworkAdapter `
             -VMName $Name `
             -SwitchName $SwitchName
+    }
+}
+
+# ---------------------------------------------------------------------
+# MAC Address Spoofing (Required for Proxmox nested VM networking)
+# ---------------------------------------------------------------------
+
+$adapter = Get-VMNetworkAdapter -VMName $Name -ErrorAction SilentlyContinue | Select-Object -First 1
+
+if ($adapter -and -not $adapter.MacAddressSpoofing)
+{
+    if ($PSCmdlet.ShouldProcess($Name, "Enable MAC Address Spoofing"))
+    {
+        Write-Host "Enabling MAC Address Spoofing for '$Name'..." -ForegroundColor Cyan
+        Set-VMNetworkAdapter `
+            -VMName $Name `
+            -MacAddressSpoofing On
     }
 }
 
