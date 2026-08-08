@@ -28,3 +28,11 @@ Create the homelab test envrionment such as Switch, NAT, VM using the ISO from `
 ```ps1
 create-tcyclops-vm.ps1 <AUTO INSTALL ISO>
 ```
+
+### `./scripts/wsl/route-tcyclops.sh`
+
+Create required static routes inside WSL to allow communication between WSL and tcyclops.
+
+```bash
+route-tcyclops.sh
+```
