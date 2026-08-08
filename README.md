@@ -17,3 +17,14 @@ Use the script to use a predownloaded base debian ISO at `<BASE DEBIAN ISO>` and
 ```bash
 generate-debian-iso.sh <PRESEED FILES> <OUTPUT DESTINATION> <BASE DEBIAN ISO>
 ```
+
+### `./scripts/hyper-v/create-tcyclops-vm.ps1`
+
+> [!WARNING] Administrator
+> Script requries running as administrator to correctly perform Hyper-V actions.
+
+Create the homelab test envrionment such as Switch, NAT, VM using the ISO from `<AUTO INSTALL ISO>`.
+
+```ps1
+create-tcyclops-vm.ps1 <AUTO INSTALL ISO>
+```
