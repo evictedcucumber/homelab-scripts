@@ -36,3 +36,11 @@ Create required static routes inside WSL to allow communication between WSL and 
 ```bash
 route-tcyclops.sh
 ```
+
+### `./scripts/hyper-v/enable-interface-forwarding.ps1`
+
+Enable forwarding between WSL and Hyper-V to allow communication between WSL and tcyclops.
+
+```ps1
+enable-interface-forwarding.ps1
+```
