@@ -1,28 +1,21 @@
 {
-  description = "DevShell for My Homelab Scripts";
-  inputs = {
-    nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
-    flake-utils.url = "github:numtide/flake-utils";
-  };
-  outputs = {
-    nixpkgs,
-    flake-utils,
-    ...
-  }:
-    flake-utils.lib.eachSystem flake-utils.lib.allSystems (system: let
-      pkgs = import nixpkgs {
-        inherit system;
+  description = "Environment for my Homelab Scripts.";
+  inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+  outputs = {nixpkgs, ...}: let
+    system = "x86_64-linux";
+    pkgs = import nixpkgs {
+      inherit system;
 
-        config.allowUnfree = true;
-      };
-    in {
-      devShells.default = pkgs.mkShell {
-        name = "homelab-scripts";
-        packages = with pkgs; [
-          wget
-          xorriso
-          rsync
-        ];
-      };
-    });
+      config.allowUnfree = true;
+    };
+  in {
+    devShells.${system}.default = pkgs.mkShell {
+      name = "homelab-scripts";
+      packages = with pkgs; [
+        wget
+        xorriso
+        rsync
+      ];
+    };
+  };
 }
