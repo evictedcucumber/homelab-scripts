@@ -6,24 +6,26 @@ A repository with all my homelab scripts.
 
 ### `scripts/iso/debian/generate-debian-iso.sh`
 
-Use the script to download the base debian ISO and add the preseed from `<PRESEED FILES>` to the autoinstall ISO then move the generated ISO to `<OUTPUT DESTINATION>`.
+Downloads the base Debian ISO, injects the `preseed.cfg` and `recipes/` from `<CONFIG DIRECTORY>`, and writes the resulting autoinstall ISO to `<OUTPUT DIRECTORY>` (defaults to the current directory if omitted).
 
 ```bash
-generate-debian-iso.sh <PRESEED FILES> <OUTPUT DESTINATION>
+generate-debian-iso.sh <CONFIG DIRECTORY> [OUTPUT DIRECTORY]
 ```
 
-Use the script to use a predownloaded base debian ISO at `<BASE DEBIAN ISO>` and add the preseed from `<PRESEED FILES>` to the autoinstall ISO then move the generated ISO to `<OUTPUT DESTINATION>`.
+Use a predownloaded base Debian ISO at `<BASE ISO>` instead of downloading one:
 
 ```bash
-generate-debian-iso.sh <PRESEED FILES> <OUTPUT DESTINATION> <BASE DEBIAN ISO>
+generate-debian-iso.sh <CONFIG DIRECTORY> [OUTPUT DIRECTORY] <BASE ISO>
 ```
+
+`<CONFIG DIRECTORY>` must contain a `preseed.cfg` file and a `recipes/` directory. Set the `DEBIAN_ISO_URL` environment variable to override the default download URL. Requires `wget`, `xorriso`, `rsync`, and `sha256sum`.
 
 ### `./scripts/hyper-v/create-tcyclops-vm.ps1`
 
 > [!WARNING] Administrator
-> Script requries running as administrator to correctly perform Hyper-V actions.
+> Script requires running as administrator to correctly perform Hyper-V actions.
 
-Create the homelab test envrionment such as Switch, NAT, VM using the ISO from `<AUTO INSTALL ISO>`.
+Create the homelab test environment such as Switch, NAT, VM using the ISO from `<AUTO INSTALL ISO>`.
 
 ```ps1
 create-tcyclops-vm.ps1 <AUTO INSTALL ISO>
