@@ -50,7 +50,7 @@ $EnableTPM = $true
 # Prerequisites
 # ---------------------------------------------------------------------
 
-function Assert-Prerequisites
+function Assert-Prerequisite
 {
     if (-not (Get-Module -ListAvailable Hyper-V))
     {
@@ -63,14 +63,17 @@ function Assert-Prerequisites
     }
 }
 
-Assert-Prerequisites
+Assert-Prerequisite
 
 # ---------------------------------------------------------------------
 # Network Switch & NAT Setup (10.0.0.0/24)
 # ---------------------------------------------------------------------
 
-function Ensure-NetworkSwitch
+function Initialize-NetworkSwitch
 {
+    [CmdletBinding(SupportsShouldProcess = $true)]
+    param()
+
     $switch = Get-VMSwitch -Name $SwitchName -ErrorAction SilentlyContinue
 
     if (-not $switch)
@@ -141,7 +144,7 @@ function Ensure-NetworkSwitch
     }
 }
 
-Ensure-NetworkSwitch
+Initialize-NetworkSwitch
 
 # ---------------------------------------------------------------------
 # Directory Setup
@@ -176,16 +179,16 @@ if (-not $vm)
         throw "VHD already exists but VM does not: $VHDPath"
     }
 
-    if ($PSCmdlet.ShouldProcess($Name, "Create 256GB Dynamic VHD and Generation 2 VM"))
+    if ($PSCmdlet.ShouldProcess($Name, "Create 256GB Dynamic VHD and Generation $Generation VM"))
     {
         Write-Host "Creating 256GB Dynamic VHD..." -ForegroundColor Cyan
         New-VHD -Path $VHDPath -SizeBytes $VHDSize -Dynamic | Out-Null
 
-        Write-Host "Creating Generation 2 VM '$Name'..." -ForegroundColor Cyan
+        Write-Host "Creating Generation $Generation VM '$Name'..." -ForegroundColor Cyan
 
         $vm = New-VM `
             -Name $Name `
-            -Generation 2 `
+            -Generation $Generation `
             -Path $VMPath `
             -SwitchName $SwitchName `
             -MemoryStartupBytes $MemoryStartup `
@@ -194,12 +197,12 @@ if (-not $vm)
 }
 else
 {
-    if ($vm.Generation -ne 2)
+    if ($vm.Generation -ne $Generation)
     {
-        throw "VM '$Name' already exists but is Generation $($vm.Generation). This script requires a Generation 2 VM."
+        throw "VM '$Name' already exists but is Generation $($vm.Generation). This script requires a Generation $Generation VM."
     }
 
-    Write-Host "VM '$Name' already exists (Generation 2). Ensuring configuration..." -ForegroundColor Yellow
+    Write-Host "VM '$Name' already exists (Generation $Generation). Ensuring configuration..." -ForegroundColor Yellow
 }
 
 # Verify VM exists before proceeding with configuration (e.g. if skipped in WhatIf mode)
