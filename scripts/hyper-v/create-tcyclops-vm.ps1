@@ -1,14 +1,35 @@
 #Requires -RunAsAdministrator
 <#
 .SYNOPSIS
-    Creates or updates a Hyper-V VM idempotently.
+    Creates or updates the tcyclops Hyper-V test VM idempotently.
 
 .DESCRIPTION
-    Creates a Generation 2 Hyper-V VM if it does not exist, or updates its
-    configuration if it already exists. Intended for running Proxmox VE.
+    Creates a Generation 2 Hyper-V VM if it does not exist, or reconciles its
+    configuration if it already exists. Intended for running Proxmox VE nested.
+
+    Most settings below (vCPU count, nested virtualization, static memory,
+    firmware, TPM) can only be changed while the VM is in the Off state. If the
+    VM is running the script stops with a clear message; pass -Force to have it
+    stopped automatically.
+
+    The install ISO is only attached and the DVD only made the first boot
+    device when the VM is first created, or when -Reinstall is given. This
+    prevents a re-run from silently re-triggering the unattended installer
+    (which would wipe the disk) on an already-provisioned VM.
 
 .PARAMETER IsoPath
-    Path to an ISO file to mount in the VM's DVD drive.
+    Path to the autoinstall ISO to mount in the VM's DVD drive.
+
+.PARAMETER Force
+    Stop the VM if it is running so offline-only settings can be applied.
+
+.PARAMETER Reinstall
+    Re-attach the ISO and set the DVD as first boot device even on an existing
+    VM. WARNING: on next boot this re-runs the unattended installer.
+
+.PARAMETER EnableGuestServiceInterface
+    Also enable the "Guest Service Interface" integration service (host to
+    guest file copy). Left disabled by default.
 
 .NOTES
     Run in an elevated PowerShell session (Administrator).
@@ -17,7 +38,13 @@
 [CmdletBinding(SupportsShouldProcess = $true)]
 param(
     [Parameter(Mandatory)]
-    [string]$IsoPath
+    [string]$IsoPath,
+
+    [switch]$Force,
+
+    [switch]$Reinstall,
+
+    [switch]$EnableGuestServiceInterface
 )
 
 $ErrorActionPreference = "Stop"
@@ -43,12 +70,25 @@ $VMPath = "E:\Hyper-V VMs"
 $VHDDirectory = Join-Path $VMPath "$Name\Virtual Hard Disks"
 $VHDPath = Join-Path $VHDDirectory "$Name.vhdx"
 $VHDSize = 256GB
+$VHDSizeGB = [int]($VHDSize / 1GB)
 
 $EnableTPM = $true
 
 # ---------------------------------------------------------------------
 # Prerequisites
 # ---------------------------------------------------------------------
+
+# Resolve the ISO to an absolute path up front: Hyper-V cmdlets and the VMMS
+# service do not share this process's working directory, and $dvd.Path
+# comparisons later assume an absolute path.
+try
+{
+    $IsoPath = (Resolve-Path -LiteralPath $IsoPath).Path
+}
+catch
+{
+    throw "ISO not found: $IsoPath"
+}
 
 function Assert-Prerequisite
 {
@@ -57,9 +97,15 @@ function Assert-Prerequisite
         throw "Hyper-V PowerShell module is not installed."
     }
 
-    if ($IsoPath -and -not (Test-Path $IsoPath))
+    if (-not (Test-Path -LiteralPath $IsoPath -PathType Leaf))
     {
-        throw "ISO not found: $IsoPath"
+        throw "ISO is not a file: $IsoPath"
+    }
+
+    $vmDriveRoot = [System.IO.Path]::GetPathRoot($VMPath)
+    if ($vmDriveRoot -and -not (Test-Path -LiteralPath $vmDriveRoot))
+    {
+        throw "VM storage location is not available: $vmDriveRoot (from `$VMPath = $VMPath)"
     }
 }
 
@@ -100,7 +146,11 @@ function Initialize-NetworkSwitch
         Start-Sleep -Seconds 1
     }
 
-    if ($adapter)
+    if (-not $adapter)
+    {
+        Write-Warning "Adapter '$adapterAlias' did not appear after 20s; skipping host gateway IP configuration."
+    }
+    else
     {
         $ip = Get-NetIPAddress -InterfaceAlias $adapterAlias -AddressFamily IPv4 -ErrorAction SilentlyContinue |
             Where-Object { $_.IPAddress -eq $HostIPAddress }
@@ -115,11 +165,16 @@ function Initialize-NetworkSwitch
                     Where-Object { $_.IPAddress -notlike "169.254.*" } |
                     Remove-NetIPAddress -Confirm:$false -ErrorAction SilentlyContinue
 
-                New-NetIPAddress `
+                $newIp = New-NetIPAddress `
                     -InterfaceAlias $adapterAlias `
                     -IPAddress $HostIPAddress `
                     -PrefixLength $PrefixLength `
-                    -ErrorAction SilentlyContinue | Out-Null
+                    -ErrorAction SilentlyContinue
+
+                if (-not $newIp)
+                {
+                    Write-Warning "Failed to assign $HostIPAddress/$PrefixLength to '$adapterAlias'. VM guests will have no gateway."
+                }
             }
         }
     }
@@ -171,6 +226,7 @@ if (-not (Test-Path $VHDDirectory))
 # ---------------------------------------------------------------------
 
 $vm = Get-VM -Name $Name -ErrorAction SilentlyContinue
+$vmIsNew = $false
 
 if (-not $vm)
 {
@@ -179,9 +235,9 @@ if (-not $vm)
         throw "VHD already exists but VM does not: $VHDPath"
     }
 
-    if ($PSCmdlet.ShouldProcess($Name, "Create 256GB Dynamic VHD and Generation $Generation VM"))
+    if ($PSCmdlet.ShouldProcess($Name, "Create ${VHDSizeGB}GB Dynamic VHD and Generation $Generation VM"))
     {
-        Write-Host "Creating 256GB Dynamic VHD..." -ForegroundColor Cyan
+        Write-Host "Creating $VHDSizeGB GB Dynamic VHD..." -ForegroundColor Cyan
         New-VHD -Path $VHDPath -SizeBytes $VHDSize -Dynamic | Out-Null
 
         Write-Host "Creating Generation $Generation VM '$Name'..." -ForegroundColor Cyan
@@ -190,9 +246,11 @@ if (-not $vm)
             -Name $Name `
             -Generation $Generation `
             -Path $VMPath `
-            -SwitchName $SwitchName `
             -MemoryStartupBytes $MemoryStartup `
-            -VHDPath $VHDPath
+            -VHDPath $VHDPath `
+            -SwitchName $SwitchName
+
+        $vmIsNew = $true
     }
 }
 else
@@ -212,6 +270,29 @@ if (-not $targetVm)
 {
     Write-Host "VM '$Name' does not exist (WhatIf mode or creation skipped). Skipping configuration steps." -ForegroundColor Yellow
     return
+}
+
+# ---------------------------------------------------------------------
+# Power State Guard
+# ---------------------------------------------------------------------
+# Almost every Set-* below requires the VM to be Off. Fail fast (or stop the
+# VM with -Force) rather than erroring halfway through reconciliation.
+
+if ($targetVm.State -ne 'Off')
+{
+    if ($Force)
+    {
+        if ($PSCmdlet.ShouldProcess($Name, "Stop VM (currently $($targetVm.State)) to apply offline-only configuration"))
+        {
+            Write-Host "Stopping VM '$Name'..." -ForegroundColor Cyan
+            Stop-VM -Name $Name -TurnOff -Force -Confirm:$false
+            $targetVm = Get-VM -Name $Name
+        }
+    }
+    else
+    {
+        throw "VM '$Name' is $($targetVm.State). Stop it first, or re-run with -Force to stop it automatically."
+    }
 }
 
 # ---------------------------------------------------------------------
@@ -261,7 +342,9 @@ if ($PSCmdlet.ShouldProcess($Name, "Configure VM options & disable automatic che
 # Guest Integration Services
 # ---------------------------------------------------------------------
 
-$disabledServices = Get-VMIntegrationService -VMName $Name -ErrorAction SilentlyContinue | Where-Object { -not $_.Enabled }
+$disabledServices = Get-VMIntegrationService -VMName $Name -ErrorAction SilentlyContinue | Where-Object {
+    (-not $_.Enabled) -and ($EnableGuestServiceInterface -or $_.Name -ne 'Guest Service Interface')
+}
 
 if ($disabledServices)
 {
@@ -275,10 +358,12 @@ if ($disabledServices)
 }
 
 # ---------------------------------------------------------------------
-# DVD / ISO
+# DVD / ISO  (first-create or -Reinstall only)
 # ---------------------------------------------------------------------
 
-if ($IsoPath)
+$applyIso = $vmIsNew -or $Reinstall
+
+if ($applyIso)
 {
     $dvd = Get-VMDvdDrive -VMName $Name -ErrorAction SilentlyContinue | Select-Object -First 1
 
@@ -289,18 +374,15 @@ if ($IsoPath)
             $dvd = Add-VMDvdDrive -VMName $Name -Path $IsoPath -Passthru
         }
     }
-    else
+    elseif ($dvd.Path -ne $IsoPath)
     {
-        if ($dvd.Path -ne $IsoPath)
+        if ($PSCmdlet.ShouldProcess($Name, "Set DVD drive ISO to '$IsoPath'"))
         {
-            if ($PSCmdlet.ShouldProcess($Name, "Set DVD drive ISO to '$IsoPath'"))
-            {
-                Set-VMDvdDrive `
-                    -VMName $Name `
-                    -ControllerNumber $dvd.ControllerNumber `
-                    -ControllerLocation $dvd.ControllerLocation `
-                    -Path $IsoPath
-            }
+            Set-VMDvdDrive `
+                -VMName $Name `
+                -ControllerNumber $dvd.ControllerNumber `
+                -ControllerLocation $dvd.ControllerLocation `
+                -Path $IsoPath
         }
     }
 
@@ -310,6 +392,10 @@ if ($IsoPath)
     {
         Set-VMFirmware -VMName $Name -FirstBootDevice $dvdDrive
     }
+}
+else
+{
+    Write-Host "Leaving ISO / boot order untouched (existing VM). Pass -Reinstall to re-arm the installer." -ForegroundColor Yellow
 }
 
 # ---------------------------------------------------------------------
@@ -376,23 +462,26 @@ if ($adapter -and -not $adapter.MacAddressSpoofing)
 }
 
 # ---------------------------------------------------------------------
-# Pre-OS Install Checkpoint
+# Pre-OS Install Checkpoint  (first-create or -Reinstall only)
 # ---------------------------------------------------------------------
 
-$checkpointName = "pre-os-install"
-$snapshot = Get-VMSnapshot -VMName $Name -Name $checkpointName -ErrorAction SilentlyContinue
+if ($applyIso)
+{
+    $checkpointName = "pre-os-install"
+    $snapshot = Get-VMSnapshot -VMName $Name -Name $checkpointName -ErrorAction SilentlyContinue
 
-if (-not $snapshot)
-{
-    if ($PSCmdlet.ShouldProcess($Name, "Create checkpoint '$checkpointName'"))
+    if (-not $snapshot)
     {
-        Write-Host "Creating checkpoint '$checkpointName'..." -ForegroundColor Cyan
-        Checkpoint-VM -Name $Name -SnapshotName $checkpointName
+        if ($PSCmdlet.ShouldProcess($Name, "Create checkpoint '$checkpointName'"))
+        {
+            Write-Host "Creating checkpoint '$checkpointName'..." -ForegroundColor Cyan
+            Checkpoint-VM -Name $Name -SnapshotName $checkpointName
+        }
     }
-}
-else
-{
-    Write-Host "Checkpoint '$checkpointName' already exists." -ForegroundColor Yellow
+    else
+    {
+        Write-Host "Checkpoint '$checkpointName' already exists." -ForegroundColor Yellow
+    }
 }
 
 # ---------------------------------------------------------------------
@@ -410,20 +499,25 @@ Get-VM -Name $Name |
         State,
         Generation,
         ProcessorCount,
-        @{Name = "MemoryStartupGB"; Expression = { $_.MemoryStartup / 1GB }},
+        @{Name = "MemoryStartupGB"; Expression = { $_.MemoryStartup / 1GB } },
         AutomaticStartAction,
         AutomaticStopAction,
         AutomaticCheckpointsEnabled,
-        CheckpointType
+        CheckpointType |
+    Format-List
 
 Get-VMProcessor -VMName $Name |
-    Select-Object Count, ExposeVirtualizationExtensions
+    Select-Object Count, ExposeVirtualizationExtensions |
+    Format-List
 
 Get-VMSecurity -VMName $Name |
-    Select-Object TpmEnabled
+    Select-Object TpmEnabled |
+    Format-List
 
 Get-VMIntegrationService -VMName $Name |
-    Select-Object Name, Enabled
+    Select-Object Name, Enabled |
+    Format-Table -AutoSize
 
 Get-VMSnapshot -VMName $Name |
-    Select-Object Name, CreationTime
+    Select-Object Name, CreationTime |
+    Format-Table -AutoSize

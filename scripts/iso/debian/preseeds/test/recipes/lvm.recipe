@@ -1,3 +1,12 @@
+# Partman expert recipe: GPT + separate /boot, LVM for everything else.
+#
+# Mount options follow the CIS Debian Linux Benchmark section 1.1
+# recommendations. /dev/shm is a tmpfs and cannot be set here -- harden it
+# via /etc/fstab (configuration management) after install.
+#
+# Sizes are fixed (min = priority = max); the LVs total ~140 GiB so vg0 keeps
+# free extents for later growth. A disk smaller than that will fail.
+
 unencrypted-lvm ::
 
     512 512 512 fat32
@@ -15,6 +24,8 @@ unencrypted-lvm ::
         use_filesystem{ }
         filesystem{ ext4 }
         mountpoint{ /boot }
+        options/nodev{ nodev }
+        options/nosuid{ nosuid }
     .
 
     1 1 -1 ext4
@@ -51,6 +62,8 @@ unencrypted-lvm ::
         use_filesystem{ }
         filesystem{ ext4 }
         mountpoint{ /var }
+        options/nodev{ nodev }
+        options/nosuid{ nosuid }
     .
 
     10240 10240 10240 ext4
@@ -62,6 +75,9 @@ unencrypted-lvm ::
         use_filesystem{ }
         filesystem{ ext4 }
         mountpoint{ /var/log }
+        options/nodev{ nodev }
+        options/nosuid{ nosuid }
+        options/noexec{ noexec }
     .
 
     8192 8192 8192 ext4
@@ -73,6 +89,9 @@ unencrypted-lvm ::
         use_filesystem{ }
         filesystem{ ext4 }
         mountpoint{ /var/log/audit }
+        options/nodev{ nodev }
+        options/nosuid{ nosuid }
+        options/noexec{ noexec }
     .
 
     8192 8192 8192 ext4
@@ -84,6 +103,9 @@ unencrypted-lvm ::
         use_filesystem{ }
         filesystem{ ext4 }
         mountpoint{ /tmp }
+        options/nodev{ nodev }
+        options/nosuid{ nosuid }
+        options/noexec{ noexec }
     .
 
     8192 8192 8192 ext4
@@ -95,6 +117,9 @@ unencrypted-lvm ::
         use_filesystem{ }
         filesystem{ ext4 }
         mountpoint{ /var/tmp }
+        options/nodev{ nodev }
+        options/nosuid{ nosuid }
+        options/noexec{ noexec }
     .
 
     10240 10240 10240 ext4
@@ -106,6 +131,8 @@ unencrypted-lvm ::
         use_filesystem{ }
         filesystem{ ext4 }
         mountpoint{ /home }
+        options/nodev{ nodev }
+        options/nosuid{ nosuid }
     .
 
     10240 10240 10240 ext4

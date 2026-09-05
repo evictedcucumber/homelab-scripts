@@ -12,9 +12,15 @@
     devShells.${system}.default = pkgs.mkShell {
       name = "homelab-scripts";
       packages = with pkgs; [
+        # generate-debian-iso.sh
         wget
         xorriso
-        rsync
+        gnupg
+        coreutils
+        gawk
+        # linting (mirrors .github/workflows/lint.yml)
+        shellcheck
+        shfmt
       ];
     };
   };
