@@ -96,6 +96,24 @@ run it by hand after a WSL restart.
 route-cyclops.sh
 ```
 
+### `scripts/cis/cis-coverage.sh`
+
+Reconciles CIS Debian 13 coverage between the sibling `ansible` and
+`cis-benchmark` repos: it reads the `cis_<id>` task tags from
+`ansible/playbooks/os-debian-13.yml` (`ansible-playbook --list-tags`) and the
+per-recommendation status tables in `cis-benchmark/docs/cyclops-debian-13-base/`,
+regenerates that repo's `coverage.md`, and — with `--check` — exits non-zero on a
+traceability gap (a recommendation marked implemented with no matching tag, or
+one still marked `:x:`).
+
+```bash
+cis-coverage.sh [--check]
+```
+
+Repo paths default to siblings under `~/repos/homelab`; override with
+`$ANSIBLE_DIR` / `$CIS_BENCHMARK_DIR`. Requires `ansible-playbook` on `PATH`, so
+run it from the `ansible` repo's `nix develop` shell.
+
 ## Development
 
 `nix develop` (or `direnv allow`) drops you in a shell with every dependency
