@@ -1,21 +1,35 @@
 #Requires -RunAsAdministrator
 <#
 .SYNOPSIS
-    Creates or updates the tcyclops Hyper-V test VM idempotently.
+    Creates or updates the tcyclops (test) or dcyclops (dev) Hyper-V VM idempotently.
 
 .DESCRIPTION
-    Creates a Generation 2 Hyper-V VM if it does not exist, or reconciles its
-    configuration if it already exists. Intended for running Proxmox VE nested.
+    Manages two Generation 2 Hyper-V VMs, selected with -VM, that share the
+    "Homelab" switch and 10.0.0.0/24 NAT. Intended for running Proxmox VE nested.
 
-    Most settings below (vCPU count, nested virtualization, static memory,
-    firmware, TPM) can only be changed while the VM is in the Off state. If the
-    VM is running the script stops with a clear message; pass -Force to have it
-    stopped automatically.
+      tcyclops  Permanent test VM. Created once and reconciled on re-runs.
+      dcyclops  Ephemeral dev VM. Brought up, used, brought down, and rebuilt
+                from scratch with -Rebuild (e.g. -VM dcyclops -Rebuild -Start).
+
+    Creates the VM if it does not exist, or reconciles its configuration if it
+    already exists. Most settings (vCPU count, nested virtualization, static
+    memory, firmware, TPM) can only be changed while the VM is in the Off
+    state. If the VM is running the script stops with a clear message; pass
+    -Force to have it stopped automatically.
 
     The install ISO is only attached and the DVD only made the first boot
-    device when the VM is first created, or when -Reinstall is given. This
-    prevents a re-run from silently re-triggering the unattended installer
-    (which would wipe the disk) on an already-provisioned VM.
+    device when the VM is first created, or when -Reinstall or -Rebuild is
+    given. This prevents a re-run from silently re-triggering the unattended
+    installer (which would wipe the disk) on an already-provisioned VM.
+
+    -Rebuild (ephemeral VMs only) turns the VM off, removes it together with
+    its checkpoints and its VHD directory, then creates it again from scratch
+    with the ISO attached and a fresh "pre-os-install" checkpoint. It is
+    refused for permanent VMs such as tcyclops; use -Reinstall there.
+
+.PARAMETER VM
+    Which VM to manage: tcyclops (permanent test VM) or dcyclops (ephemeral
+    dev VM). Per-VM name and sizing live in the Desired Configuration section.
 
 .PARAMETER IsoPath
     Path to the autoinstall ISO to mount in the VM's DVD drive.
@@ -27,9 +41,29 @@
     Re-attach the ISO and set the DVD as first boot device even on an existing
     VM. WARNING: on next boot this re-runs the unattended installer.
 
+.PARAMETER Rebuild
+    Destroy and recreate the VM from scratch: stop it, remove the VM, delete
+    its VHD directory (including checkpoint files), then run the normal create
+    path. Only allowed for ephemeral VMs (dcyclops). WARNING: all VM data is
+    lost.
+
+.PARAMETER Start
+    Start the VM after it has been configured, if it is not already running.
+
 .PARAMETER EnableGuestServiceInterface
     Also enable the "Guest Service Interface" integration service (host to
     guest file copy). Left disabled by default.
+
+.EXAMPLE
+    .\create-cyclops-vm.ps1 -VM tcyclops -IsoPath C:\isos\proxmox-auto.iso
+
+    First create of the permanent test VM (or reconcile an existing one).
+
+.EXAMPLE
+    .\create-cyclops-vm.ps1 -VM dcyclops -IsoPath C:\isos\proxmox-auto.iso -Rebuild -Start
+
+    Throw away dcyclops (if present), recreate it from scratch, and boot it
+    into the unattended installer.
 
 .NOTES
     Run in an elevated PowerShell session (Administrator).
@@ -38,11 +72,19 @@
 [CmdletBinding(SupportsShouldProcess = $true)]
 param(
     [Parameter(Mandatory)]
+    [ValidateSet('tcyclops', 'dcyclops')]
+    [string]$VM,
+
+    [Parameter(Mandatory)]
     [string]$IsoPath,
 
     [switch]$Force,
 
     [switch]$Reinstall,
+
+    [switch]$Rebuild,
+
+    [switch]$Start,
 
     [switch]$EnableGuestServiceInterface
 )
@@ -53,12 +95,33 @@ $ErrorActionPreference = "Stop"
 # Desired Configuration
 # ---------------------------------------------------------------------
 
-$Name = "tcyclops.homelab.zezura.cc"
+# Per-VM settings. Ephemeral VMs may be destroyed and recreated with -Rebuild.
+$VMConfigs = @{
+    tcyclops = @{
+        Name          = "tcyclops.homelab.zezura.cc"
+        MemoryStartup = 8GB
+        CPUCount      = 4
+        VHDSize       = 256GB
+        Ephemeral     = $false
+    }
+    dcyclops = @{
+        Name          = "dcyclops.homelab.zezura.cc"
+        MemoryStartup = 8GB
+        CPUCount      = 4
+        VHDSize       = 256GB
+        Ephemeral     = $true
+    }
+}
+
+$VMConfig = $VMConfigs[$VM]
+
+$Name = $VMConfig.Name
+$Ephemeral = $VMConfig.Ephemeral
 
 $Generation = 2
 
-$MemoryStartup = 8GB
-$CPUCount = 4
+$MemoryStartup = $VMConfig.MemoryStartup
+$CPUCount = $VMConfig.CPUCount
 
 $SwitchName = "Homelab"
 $HostIPAddress = "10.0.0.1"
@@ -69,7 +132,7 @@ $NatName = "HomelabNAT"
 $VMPath = "E:\Hyper-V VMs"
 $VHDDirectory = Join-Path $VMPath "$Name\Virtual Hard Disks"
 $VHDPath = Join-Path $VHDDirectory "$Name.vhdx"
-$VHDSize = 256GB
+$VHDSize = $VMConfig.VHDSize
 $VHDSizeGB = [int]($VHDSize / 1GB)
 
 $EnableTPM = $true
@@ -110,6 +173,11 @@ function Assert-Prerequisite
 }
 
 Assert-Prerequisite
+
+if ($Rebuild -and -not $Ephemeral)
+{
+    throw "-Rebuild is refused for permanent VM '$VM'. Use -Reinstall to re-arm the installer instead."
+}
 
 # ---------------------------------------------------------------------
 # Network Switch & NAT Setup (10.0.0.0/24)
@@ -202,6 +270,53 @@ function Initialize-NetworkSwitch
 Initialize-NetworkSwitch
 
 # ---------------------------------------------------------------------
+# Rebuild  (ephemeral VMs only): tear down so the create path starts fresh
+# ---------------------------------------------------------------------
+
+if ($Rebuild)
+{
+    $existingVm = Get-VM -Name $Name -ErrorAction SilentlyContinue
+
+    if ($existingVm)
+    {
+        if ($PSCmdlet.ShouldProcess($Name, "Rebuild: turn off and remove VM"))
+        {
+            if ($existingVm.State -ne 'Off')
+            {
+                Write-Host "Turning off VM '$Name'..." -ForegroundColor Cyan
+                Stop-VM -Name $Name -TurnOff -Force -Confirm:$false
+            }
+
+            Write-Host "Removing VM '$Name'..." -ForegroundColor Cyan
+            Remove-VM -Name $Name -Force -Confirm:$false
+        }
+    }
+    else
+    {
+        Write-Host "VM '$Name' does not exist; nothing to remove." -ForegroundColor Yellow
+    }
+
+    # Delete leftover storage (VHD, .avhdx checkpoint files). Never touch
+    # anything outside $VMPath.
+    $vmRoot = [System.IO.Path]::GetFullPath((Join-Path $VMPath $Name))
+    $vmPathFull = [System.IO.Path]::GetFullPath($VMPath).TrimEnd('\', '/')
+
+    if ([string]::IsNullOrWhiteSpace($Name) -or -not $vmRoot.StartsWith($vmPathFull + [System.IO.Path]::DirectorySeparatorChar, [System.StringComparison]::OrdinalIgnoreCase))
+    {
+        throw "Refusing to delete '$vmRoot': it is not inside '$vmPathFull'."
+    }
+
+    if (Test-Path -LiteralPath $vmRoot)
+    {
+        if ($PSCmdlet.ShouldProcess($vmRoot, "Rebuild: delete VM storage (VHDs and checkpoint files)"))
+        {
+            Write-Host "Deleting '$vmRoot'..." -ForegroundColor Cyan
+            Remove-Item -LiteralPath $vmRoot -Recurse -Force
+        }
+    }
+}
+
+# ---------------------------------------------------------------------
 # Directory Setup
 # ---------------------------------------------------------------------
 
@@ -280,7 +395,9 @@ if (-not $targetVm)
 
 if ($targetVm.State -ne 'Off')
 {
-    if ($Force)
+    # -Rebuild always yields a new VM, so no -Force is needed (this branch is
+    # only reachable under -WhatIf, where the old VM was not really removed).
+    if ($Force -or $Rebuild)
     {
         if ($PSCmdlet.ShouldProcess($Name, "Stop VM (currently $($targetVm.State)) to apply offline-only configuration"))
         {
@@ -361,7 +478,7 @@ if ($disabledServices)
 # DVD / ISO  (first-create or -Reinstall only)
 # ---------------------------------------------------------------------
 
-$applyIso = $vmIsNew -or $Reinstall
+$applyIso = $vmIsNew -or $Reinstall -or $Rebuild
 
 if ($applyIso)
 {
@@ -521,3 +638,22 @@ Get-VMIntegrationService -VMName $Name |
 Get-VMSnapshot -VMName $Name |
     Select-Object Name, CreationTime |
     Format-Table -AutoSize
+
+# ---------------------------------------------------------------------
+# Start VM
+# ---------------------------------------------------------------------
+
+if ($Start)
+{
+    $startVm = Get-VM -Name $Name -ErrorAction SilentlyContinue
+
+    if ($startVm -and $startVm.State -eq 'Running')
+    {
+        Write-Host "VM '$Name' is already running." -ForegroundColor Yellow
+    }
+    elseif ($PSCmdlet.ShouldProcess($Name, "Start VM"))
+    {
+        Write-Host "Starting VM '$Name'..." -ForegroundColor Cyan
+        Start-VM -Name $Name
+    }
+}
