@@ -26,20 +26,27 @@ every lab subnet rather than each switch having its own.
 
 Downloads the **current** Debian amd64 netinst ISO, verifies it against the
 published `SHA256SUMS` (and, if `gpg` and the Debian CD signing key are
-available, the OpenPGP signature), injects `preseed.cfg` and `recipes/` from
-`<CONFIG DIRECTORY>`, and writes the autoinstall ISO to `<OUTPUT DIRECTORY>`
-(defaults to the current directory).
+available, the OpenPGP signature), injects a preseed and partman recipes, and
+writes an unattended-install ISO to `<OUTPUT DIRECTORY>` (defaults to the
+current directory). The ISO boots straight into the automated install after
+`BOOT_TIMEOUT` seconds, with no menu selection needed (UEFI and BIOS).
 
 ```bash
 generate-debian-iso.sh <VM NAME | CONFIG DIRECTORY> [OUTPUT DIRECTORY] [BASE ISO]
 ```
 
 - `<VM NAME>` (`tcyclops` or `dcyclops`) selects the matching config under
-  `scripts/iso/debian/preseeds/`, e.g. `generate-debian-iso.sh dcyclops`. The
-  two differ only in hostname, static IP and gateway, which match the VM's
-  Hyper-V switch (see the network table above).
-- `<CONFIG DIRECTORY>` is any other directory containing `preseed.cfg` and a
-  `recipes/` directory.
+  `scripts/iso/debian/preseeds/`, e.g. `generate-debian-iso.sh dcyclops`.
+- Preseed layout: `preseeds/common/preseed.cfg.in` is the one shared template
+  and `preseeds/common/recipes/` the shared recipes. Each
+  `preseeds/<vm>/vm.conf` holds only that VM's `HOSTNAME`, `DOMAIN`,
+  `IPADDRESS`, `NETMASK`, `GATEWAY` and `NAMESERVERS`, which must match its
+  entry in `create-cyclops-vm.ps1` (see the network table above). `vm.conf` is
+  parsed (not sourced) and validated; unknown, missing or malformed values
+  fail the build.
+- `<CONFIG DIRECTORY>` is any other directory with either a ready-made
+  `preseed.cfg` or a `vm.conf`, and optionally its own `recipes/`. The build
+  fails if the recipe the preseed names is missing.
 - The output ISO is named `<config dir name>-preseed-auto.iso` (e.g.
   `dcyclops-preseed-auto.iso`), so both VMs' ISOs can share a directory.
 - `[BASE ISO]` uses a local ISO instead of downloading. `<OUTPUT DIRECTORY>`
@@ -62,6 +69,7 @@ The root password in `preseed.cfg` is a throwaway placeholder hash (marked
 | `DEBIAN_ISO_BASE_URL` | override the ISO directory URL                          |
 | `DEBIAN_ISO_CACHE`    | override the download cache directory                   |
 | `DEBIAN_OUTPUT_NAME`  | output ISO filename (default `<config dir name>-preseed-auto.iso`) |
+| `BOOT_TIMEOUT`        | seconds the boot menu waits before auto-starting the install (default `5`) |
 | `REQUIRE_GPG=1`       | fail unless `SHA256SUMS` is OpenPGP-verified            |
 | `SKIP_GPG=1`          | skip OpenPGP verification                               |
 
@@ -102,9 +110,14 @@ create-cyclops-vm.ps1 -VM <tcyclops|dcyclops> -IsoPath <AUTO INSTALL ISO> [-Forc
 
 - Offline-only settings require the VM to be **Off**. The script stops with a
   message if it is running; `-Force` stops it automatically.
-- The ISO is attached and the DVD made first boot device **only** on first
-  create, or with `-Reinstall`. This stops a re-run from silently re-arming the
+- The ISO is attached and the boot order changed **only** on first create,
+  `-Rebuild` or `-Reinstall`. This stops a re-run from silently re-arming the
   unattended installer (which would wipe the disk) on a provisioned VM.
+- Because the ISO installs without a keypress, new and rebuilt VMs boot
+  **disk first, then DVD**: the blank disk falls through to the installer once,
+  and the installed disk boots itself afterwards instead of reinstalling.
+  `-Reinstall` puts the DVD first (the disk already has an OS); the installer
+  then registers its own UEFI boot entry ahead of it.
 - `-EnableGuestServiceInterface` opts into host→guest file copy (off by
   default).
 

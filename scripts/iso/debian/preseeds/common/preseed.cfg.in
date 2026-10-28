@@ -8,14 +8,14 @@ d-i keyboard-configuration/xkb-keymap select us
 # which is not guaranteed under systemd predictable interface naming.
 d-i netcfg/choose_interface select auto
 d-i netcfg/disable_autoconfig boolean true
-d-i netcfg/get_ipaddress string 10.0.2.2
-d-i netcfg/get_netmask string 255.255.255.0
-d-i netcfg/get_gateway string 10.0.2.1
-d-i netcfg/get_nameservers string 1.1.1.1
+d-i netcfg/get_ipaddress string @IPADDRESS@
+d-i netcfg/get_netmask string @NETMASK@
+d-i netcfg/get_gateway string @GATEWAY@
+d-i netcfg/get_nameservers string @NAMESERVERS@
 d-i netcfg/confirm_static boolean true
-d-i netcfg/get_hostname string tcyclops
-d-i netcfg/get_domain string homelab.zezura.cc
-d-i netcfg/hostname string tcyclops
+d-i netcfg/get_hostname string @HOSTNAME@
+d-i netcfg/get_domain string @DOMAIN@
+d-i netcfg/hostname string @HOSTNAME@
 
 ### Mirror
 d-i mirror/country string manual
@@ -57,6 +57,9 @@ d-i grub-installer/with_other_os boolean false
 # "default" lets grub-installer target the ESP on this UEFI / Generation 2
 # VM instead of being forced onto the MBR of /dev/sda.
 d-i grub-installer/bootdev string default
+# Also write EFI/BOOT/BOOTX64.EFI so the disk boots without an NVRAM entry
+# (e.g. disk-first boot order or reset firmware variables).
+d-i grub-installer/force-efi-extra-removable boolean true
 
 ### APT
 tasksel tasksel/first multiselect standard, ssh-server
