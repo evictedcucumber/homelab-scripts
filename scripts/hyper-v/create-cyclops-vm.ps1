@@ -11,7 +11,7 @@
     the .1 address of each subnet as the guest gateway:
 
       VM        Switch       Host/gateway IP   Subnet
-      tcyclops  Homelab      10.0.0.1          10.0.0.0/24
+      tcyclops  Homelab      10.0.2.1          10.0.2.0/24
       dcyclops  HomelabDev   10.0.1.1          10.0.1.0/24
 
     Both subnets sit behind one shared NAT, "HomelabNAT", with prefix
@@ -116,8 +116,8 @@ $VMConfigs = @{
         VHDSize       = 256GB
         Ephemeral     = $false
         SwitchName    = "Homelab"
-        HostIPAddress = "10.0.0.1"
-        Subnet        = "10.0.0.0/24"
+        HostIPAddress = "10.0.2.1"
+        Subnet        = "10.0.2.0/24"
     }
     dcyclops = @{
         Name          = "dcyclops.homelab.zezura.cc"
@@ -148,7 +148,7 @@ $Subnet = $VMConfig.Subnet
 
 # WinNAT allows only one NAT network per host, so all lab switches share a
 # single NAT. Its prefix must contain every per-VM subnet above: 10.0.0.0/16
-# covers 10.0.0.0/24 (tcyclops), 10.0.1.0/24 (dcyclops) and room for more.
+# covers 10.0.1.0/24 (dcyclops), 10.0.2.0/24 (tcyclops) and room for more.
 $NatName = "HomelabNAT"
 $NatPrefix = "10.0.0.0/16"
 
@@ -302,7 +302,7 @@ function Initialize-NetworkSwitch
     $labSubnets = @($VMConfigs.Values | ForEach-Object { $_.Subnet })
 
     # Lab NATs: ours by name, plus any NAT on exactly one lab subnet. Older
-    # per-VM setups created those (e.g. a 10.0.0.0/24 NAT for tcyclops under
+    # per-VM setups created those (e.g. a per-VM NAT for one lab subnet under
     # another name); they are folded into the shared NAT.
     $labNats = @($allNats | Where-Object {
             $_.Name -eq $NatName -or $labSubnets -contains $_.InternalIPInterfaceAddressPrefix

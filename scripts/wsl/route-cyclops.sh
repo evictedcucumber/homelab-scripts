@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Adds routes to the cyclops networks via the Windows host, as seen from
 # inside WSL2 (NAT mode):
-#   - 10.0.0.0/24    tcyclops (test)      -- Hyper-V "Homelab" internal vSwitch
+#   - 10.0.2.0/24    tcyclops (test)      -- Hyper-V "Homelab" internal vSwitch
 #   - 10.0.1.0/24    dcyclops (dev)       -- Hyper-V "HomelabDev" internal vSwitch
 #   - 192.168.2.0/24 cyclops (production) -- physical homelab LAN behind the host
 #
@@ -17,7 +17,7 @@
 set -euo pipefail
 
 TARGET_NETS=(
-    "10.0.0.0/24"
+    "10.0.2.0/24"
     "10.0.1.0/24"
     "192.168.2.0/24"
 )

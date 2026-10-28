@@ -6,8 +6,8 @@ Network layout referenced throughout:
 
 | Network          | Purpose              | Path                                          |
 | ---------------- | -------------------- | --------------------------------------------- |
-| `10.0.0.0/24`    | tcyclops (test, `.2`) | Hyper-V **Homelab** internal vSwitch          |
 | `10.0.1.0/24`    | dcyclops (dev, `.2`)  | Hyper-V **HomelabDev** internal vSwitch       |
+| `10.0.2.0/24`    | tcyclops (test, `.2`) | Hyper-V **Homelab** internal vSwitch          |
 | `192.168.2.0/24` | cyclops (production) | physical homelab LAN behind the host          |
 
 Both Hyper-V switches reach the internet through one shared `HomelabNAT` on
@@ -79,7 +79,7 @@ gets its own internal switch and subnet (see the network table above); per-VM
 sizing and networking live in a table at the top of the script.
 
 - On first run after upgrading, any existing NAT on exactly a lab subnet
-  (e.g. an older `10.0.0.0/24` NAT, whatever its name) is replaced with the
+  (e.g. an older per-VM NAT, whatever its name) is replaced with the
   shared `HomelabNAT` on `10.0.0.0/16`, briefly interrupting NAT for running lab
   VMs. A NAT that overlaps the lab range in any other way stops the script; any
   other NAT only triggers a warning, since WinNAT supports one per host.
@@ -126,7 +126,7 @@ resets the flag, so **re-run this after `wsl --shutdown`**.
 
 ### `scripts/wsl/route-cyclops.sh`
 
-Creates static routes inside WSL to reach tcyclops (`10.0.0.0/24`), dcyclops (`10.0.1.0/24`) and cyclops
+Creates static routes inside WSL to reach dcyclops (`10.0.1.0/24`), tcyclops (`10.0.2.0/24`) and cyclops
 (`192.168.2.0/24`) via the (runtime-detected) Windows host gateway. Idempotent;
 run it by hand after a WSL restart.
 
