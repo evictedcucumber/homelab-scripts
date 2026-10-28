@@ -424,10 +424,10 @@ if (-not (Test-Path $VHDDirectory))
 # VM Creation / Existence Check
 # ---------------------------------------------------------------------
 
-$vm = Get-VM -Name $Name -ErrorAction SilentlyContinue
+$currentVm = Get-VM -Name $Name -ErrorAction SilentlyContinue
 $vmIsNew = $false
 
-if (-not $vm)
+if (-not $currentVm)
 {
     if (Test-Path $VHDPath)
     {
@@ -441,7 +441,7 @@ if (-not $vm)
 
         Write-Host "Creating Generation $Generation VM '$Name'..." -ForegroundColor Cyan
 
-        $vm = New-VM `
+        $currentVm = New-VM `
             -Name $Name `
             -Generation $Generation `
             -Path $VMPath `
@@ -454,9 +454,9 @@ if (-not $vm)
 }
 else
 {
-    if ($vm.Generation -ne $Generation)
+    if ($currentVm.Generation -ne $Generation)
     {
-        throw "VM '$Name' already exists but is Generation $($vm.Generation). This script requires a Generation $Generation VM."
+        throw "VM '$Name' already exists but is Generation $($currentVm.Generation). This script requires a Generation $Generation VM."
     }
 
     Write-Host "VM '$Name' already exists (Generation $Generation). Ensuring configuration..." -ForegroundColor Yellow
