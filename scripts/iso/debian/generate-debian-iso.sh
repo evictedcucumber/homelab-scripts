@@ -29,7 +29,6 @@ trap 'on_error ${LINENO} "$BASH_COMMAND"' ERR
 # --- Configuration & Constants ---
 # Directory that holds the "current" netinst image, SHA256SUMS and .sign.
 readonly ISO_BASE_URL="${DEBIAN_ISO_BASE_URL:-https://cdimage.debian.org/debian-cd/current/amd64/iso-cd}"
-readonly OUTPUT_NAME="${DEBIAN_OUTPUT_NAME:-debian-preseed-auto.iso}"
 readonly CACHE_DIR="${DEBIAN_ISO_CACHE:-${XDG_CACHE_HOME:-$HOME/.cache}/generate-debian-iso}"
 # Kernel command-line snippet that triggers the unattended install.
 readonly PRESEED_ARGS='auto=true priority=critical file=/cdrom/preseed.cfg'
@@ -44,7 +43,9 @@ Usage: $0 <config-directory> [output-directory] [iso-path]
 
 Arguments:
   config-directory  Directory containing preseed.cfg and recipes/
-  output-directory  Where to write ${OUTPUT_NAME} (default: current directory).
+  output-directory  Where to write <config-name>-preseed-auto.iso, where
+                    <config-name> is the config directory's basename
+                    (default: current directory).
                     Must be given explicitly when passing iso-path.
   iso-path          Use this local Debian netinst ISO instead of downloading.
 
@@ -53,7 +54,8 @@ Environment:
                          (default: ${ISO_BASE_URL})
   DEBIAN_ISO_CACHE       ISO download cache directory
                          (default: ${CACHE_DIR})
-  DEBIAN_OUTPUT_NAME     Output ISO filename (default: ${OUTPUT_NAME})
+  DEBIAN_OUTPUT_NAME     Output ISO filename
+                         (default: <config-name>-preseed-auto.iso)
   REQUIRE_GPG=1          Fail unless SHA256SUMS is OpenPGP-verified
   SKIP_GPG=1             Skip OpenPGP verification of SHA256SUMS
 EOF
@@ -82,6 +84,9 @@ if [[ ! -d "$CONFIG_DIR" ]]; then
     log_error "Config directory not found: $CONFIG_DIR"
     exit 1
 fi
+# Named after the config directory so per-VM ISOs (tcyclops, dcyclops, ...)
+# can share an output directory without overwriting each other.
+readonly OUTPUT_NAME="${DEBIAN_OUTPUT_NAME:-$(basename -- "$CONFIG_DIR")-preseed-auto.iso}"
 
 if [[ $# -ge 2 ]]; then
     OUTPUT_DIR="$(realpath -m -- "$2")"
