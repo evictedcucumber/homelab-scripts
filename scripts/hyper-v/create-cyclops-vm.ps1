@@ -4,8 +4,20 @@
     Creates or updates the tcyclops (test) or dcyclops (dev) Hyper-V VM idempotently.
 
 .DESCRIPTION
-    Manages two Generation 2 Hyper-V VMs, selected with -VM, that share the
-    "Homelab" switch and 10.0.0.0/24 NAT. Intended for running Proxmox VE nested.
+    Manages two Generation 2 Hyper-V VMs, selected with -VM. Intended for
+    running Proxmox VE nested.
+
+    Each VM gets its own internal virtual switch and subnet; the host holds
+    the .1 address of each subnet as the guest gateway:
+
+      VM        Switch       Host/gateway IP   Subnet
+      tcyclops  Homelab      10.0.0.1          10.0.0.0/24
+      dcyclops  HomelabDev   10.0.1.1          10.0.1.0/24
+
+    Both subnets sit behind one shared NAT, "HomelabNAT", with prefix
+    10.0.0.0/16 (WinNAT supports only one NAT network per host). If an older
+    HomelabNAT with a different prefix exists it is replaced, which briefly
+    interrupts NAT for running lab VMs.
 
       tcyclops  Permanent test VM. Created once and reconciled on re-runs.
       dcyclops  Ephemeral dev VM. Brought up, used, brought down, and rebuilt
@@ -103,6 +115,9 @@ $VMConfigs = @{
         CPUCount      = 4
         VHDSize       = 256GB
         Ephemeral     = $false
+        SwitchName    = "Homelab"
+        HostIPAddress = "10.0.0.1"
+        Subnet        = "10.0.0.0/24"
     }
     dcyclops = @{
         Name          = "dcyclops.homelab.zezura.cc"
@@ -110,6 +125,9 @@ $VMConfigs = @{
         CPUCount      = 4
         VHDSize       = 256GB
         Ephemeral     = $true
+        SwitchName    = "HomelabDev"
+        HostIPAddress = "10.0.1.1"
+        Subnet        = "10.0.1.0/24"
     }
 }
 
@@ -123,11 +141,16 @@ $Generation = 2
 $MemoryStartup = $VMConfig.MemoryStartup
 $CPUCount = $VMConfig.CPUCount
 
-$SwitchName = "Homelab"
-$HostIPAddress = "10.0.0.1"
+$SwitchName = $VMConfig.SwitchName
+$HostIPAddress = $VMConfig.HostIPAddress
 $PrefixLength = 24
-$Subnet = "10.0.0.0/24"
+$Subnet = $VMConfig.Subnet
+
+# WinNAT allows only one NAT network per host, so all lab switches share a
+# single NAT. Its prefix must contain every per-VM subnet above: 10.0.0.0/16
+# covers 10.0.0.0/24 (tcyclops), 10.0.1.0/24 (dcyclops) and room for more.
 $NatName = "HomelabNAT"
+$NatPrefix = "10.0.0.0/16"
 
 $VMPath = "E:\Hyper-V VMs"
 $VHDDirectory = Join-Path $VMPath "$Name\Virtual Hard Disks"
@@ -180,8 +203,36 @@ if ($Rebuild -and -not $Ephemeral)
 }
 
 # ---------------------------------------------------------------------
-# Network Switch & NAT Setup (10.0.0.0/24)
+# Network Switch & Shared NAT Setup
 # ---------------------------------------------------------------------
+
+function Test-CidrOverlap
+{
+    param(
+        [Parameter(Mandatory)][string]$CidrA,
+        [Parameter(Mandatory)][string]$CidrB
+    )
+
+    function ConvertTo-Range
+    {
+        param([string]$Cidr)
+
+        $addr, $len = $Cidr -split '/'
+        $bytes = ([System.Net.IPAddress]::Parse($addr)).GetAddressBytes()
+        [uint64]$start = 0
+        foreach ($b in $bytes)
+        {
+            $start = $start * 256 + $b
+        }
+        $size = [math]::Pow(2, 32 - [int]$len)
+        $start = [math]::Floor($start / $size) * $size
+        return @($start, ($start + $size - 1))
+    }
+
+    $a = ConvertTo-Range $CidrA
+    $b = ConvertTo-Range $CidrB
+    return ($a[0] -le $b[1]) -and ($b[0] -le $a[1])
+}
 
 function Initialize-NetworkSwitch
 {
@@ -227,7 +278,7 @@ function Initialize-NetworkSwitch
         {
             if ($PSCmdlet.ShouldProcess($adapterAlias, "Assign Gateway IP $HostIPAddress/$PrefixLength"))
             {
-                Write-Host "Assigning IP $HostIPAddress to $adapterAlias..." -ForegroundColor Cyan
+                Write-Host "Assigning IP $HostIPAddress to $adapterAlias (subnet $Subnet)..." -ForegroundColor Cyan
 
                 Get-NetIPAddress -InterfaceAlias $adapterAlias -AddressFamily IPv4 -ErrorAction SilentlyContinue |
                     Where-Object { $_.IPAddress -notlike "169.254.*" } |
@@ -247,23 +298,45 @@ function Initialize-NetworkSwitch
         }
     }
 
-    $nat = Get-NetNat -ErrorAction SilentlyContinue | Where-Object {
-        $_.Name -eq $NatName -or $_.InternalIPInterfaceAddressPrefix -eq $Subnet
+    $allNats = @(Get-NetNat -ErrorAction SilentlyContinue)
+    $ourNat = $allNats | Where-Object { $_.Name -eq $NatName }
+
+    # Never delete someone else's NAT; it would also block ours (one per host).
+    $foreignNat = $allNats | Where-Object {
+        $_.Name -ne $NatName -and
+        $_.InternalIPInterfaceAddressPrefix -and
+        $_.InternalIPInterfaceAddressPrefix -notmatch ':' -and
+        (Test-CidrOverlap $_.InternalIPInterfaceAddressPrefix $NatPrefix)
+    } | Select-Object -First 1
+
+    if ($foreignNat)
+    {
+        throw "Existing NAT '$($foreignNat.Name)' ($($foreignNat.InternalIPInterfaceAddressPrefix)) overlaps the lab range $NatPrefix. Remove or renumber it first; this script will not delete it."
     }
 
-    if (-not $nat)
+    if ($ourNat -and $ourNat.InternalIPInterfaceAddressPrefix -eq $NatPrefix)
     {
-        if ($PSCmdlet.ShouldProcess($NatName, "Create NAT Network ($Subnet)"))
+        Write-Host "NAT Network '$NatName' ($NatPrefix) already exists." -ForegroundColor Yellow
+        return
+    }
+
+    if ($ourNat)
+    {
+        if ($PSCmdlet.ShouldProcess($NatName, "Replace NAT Network prefix $($ourNat.InternalIPInterfaceAddressPrefix) with $NatPrefix"))
         {
-            Write-Host "Creating NAT Network '$NatName' ($Subnet)..." -ForegroundColor Cyan
+            Write-Host "NAT '$NatName' has prefix $($ourNat.InternalIPInterfaceAddressPrefix); replacing with $NatPrefix. This briefly interrupts NAT for running lab VMs." -ForegroundColor Yellow
+            Remove-NetNat -Name $NatName -Confirm:$false
             New-NetNat `
                 -Name $NatName `
-                -InternalIPInterfaceAddressPrefix $Subnet | Out-Null
+                -InternalIPInterfaceAddressPrefix $NatPrefix | Out-Null
         }
     }
-    else
+    elseif ($PSCmdlet.ShouldProcess($NatName, "Create NAT Network ($NatPrefix)"))
     {
-        Write-Host "NAT Network for '$Subnet' already exists ('$($nat.Name)')." -ForegroundColor Yellow
+        Write-Host "Creating NAT Network '$NatName' ($NatPrefix)..." -ForegroundColor Cyan
+        New-NetNat `
+            -Name $NatName `
+            -InternalIPInterfaceAddressPrefix $NatPrefix | Out-Null
     }
 }
 

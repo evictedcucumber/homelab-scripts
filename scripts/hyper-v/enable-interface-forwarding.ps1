@@ -16,7 +16,8 @@
 
 .PARAMETER SwitchName
     Hyper-V virtual switch names whose host vEthernet interface should have
-    forwarding enabled. Defaults to 'Homelab'.
+    forwarding enabled. Defaults to 'Homelab' (tcyclops) and 'HomelabDev'
+    (dcyclops).
 
 .PARAMETER SkipWsl
     Do not touch the WSL vEthernet interface.
@@ -27,7 +28,7 @@
 
 [CmdletBinding(SupportsShouldProcess = $true)]
 param(
-    [string[]]$SwitchName = @('Homelab'),
+    [string[]]$SwitchName = @('Homelab', 'HomelabDev'),
     [switch]$SkipWsl
 )
 
