@@ -4,10 +4,16 @@ A repository with all my homelab scripts.
 
 Network layout referenced throughout:
 
-| Network          | Purpose             | Path                                       |
-| ---------------- | ------------------- | ------------------------------------------ |
-| `10.0.0.0/24`    | tcyclops (test)     | Hyper-V **Homelab** internal vSwitch + NAT |
-| `192.168.2.0/24` | cyclops (production) | physical homelab LAN behind the host       |
+| Network          | Purpose                                         | Path                                       |
+| ---------------- | ----------------------------------------------- | ------------------------------------------ |
+| `10.0.0.0/24`    | tcyclops (test, `.2`) and dcyclops (dev, `.3`)  | Hyper-V **Homelab** internal vSwitch + NAT |
+| `192.168.2.0/24` | cyclops (production)                            | physical homelab LAN behind the host       |
+
+| Host       | Role                                                                  |
+| ---------- | --------------------------------------------------------------------- |
+| `cyclops`  | production (physical)                                                 |
+| `tcyclops` | long-lived test VM for exercising specific changes                    |
+| `dcyclops` | throwaway dev VM: bring up, do something, tear down, rebuild          |
 
 ## Scripts
 
@@ -24,6 +30,10 @@ generate-debian-iso.sh <CONFIG DIRECTORY> [OUTPUT DIRECTORY] [BASE ISO]
 ```
 
 - `<CONFIG DIRECTORY>` must contain `preseed.cfg` and a `recipes/` directory.
+  One per VM lives under `scripts/iso/debian/preseeds/` (`tcyclops/`,
+  `dcyclops/`); they differ only in hostname and static IP.
+- The output ISO is named `<config dir name>-preseed-auto.iso` (e.g.
+  `dcyclops-preseed-auto.iso`), so both VMs' ISOs can share a directory.
 - `[BASE ISO]` uses a local ISO instead of downloading. `<OUTPUT DIRECTORY>`
   must be given explicitly when you pass it (it is positional).
 - The netinst filename is resolved from `SHA256SUMS` at runtime, so a new
@@ -43,24 +53,38 @@ The root password in `preseed.cfg` is a throwaway placeholder hash (marked
 | --------------------- | ------------------------------------------------------- |
 | `DEBIAN_ISO_BASE_URL` | override the ISO directory URL                          |
 | `DEBIAN_ISO_CACHE`    | override the download cache directory                   |
-| `DEBIAN_OUTPUT_NAME`  | output ISO filename (default `debian-preseed-auto.iso`) |
+| `DEBIAN_OUTPUT_NAME`  | output ISO filename (default `<config dir name>-preseed-auto.iso`) |
 | `REQUIRE_GPG=1`       | fail unless `SHA256SUMS` is OpenPGP-verified            |
 | `SKIP_GPG=1`          | skip OpenPGP verification                               |
 
 Requires `wget`, `xorriso`, `gpg` (optional), and coreutils/`awk`
 (`sha256sum`, `realpath`, ...). `nix develop` provides all of these.
 
-### `scripts/hyper-v/create-tcyclops-vm.ps1`
+### `scripts/hyper-v/create-cyclops-vm.ps1`
 
 > [!WARNING]
 > Requires an elevated (Administrator) PowerShell session for Hyper-V actions.
 
-Creates or reconciles the Generation 2 `tcyclops` test VM (Switch, NAT, VHD,
-CPU/nested-virt, TPM, Secure Boot off, MAC spoofing).
+Creates or reconciles the Generation 2 `tcyclops` (test) or `dcyclops` (dev) VM
+(Switch, NAT, VHD, CPU/nested-virt, TPM, Secure Boot off, MAC spoofing). Both
+share the **Homelab** switch and NAT; per-VM sizing lives in a table at the top
+of the script.
 
 ```ps1
-create-tcyclops-vm.ps1 -IsoPath <AUTO INSTALL ISO> [-Force] [-Reinstall] [-EnableGuestServiceInterface]
+create-cyclops-vm.ps1 -VM <tcyclops|dcyclops> -IsoPath <AUTO INSTALL ISO> [-Force] [-Reinstall] [-Rebuild] [-Start] [-EnableGuestServiceInterface]
 ```
+
+- `-Rebuild` deletes the VM and its disks (checkpoints included) and creates it
+  fresh. It is refused for `tcyclops`, which is permanent; only `dcyclops`
+  allows it. A typical dev loop:
+
+  ```ps1
+  create-cyclops-vm.ps1 -VM dcyclops -IsoPath .\dcyclops-preseed-auto.iso -Rebuild -Start
+  # ...do something...
+  Stop-VM dcyclops.homelab.zezura.cc
+  ```
+
+- `-Start` boots the VM once configuration is done.
 
 - Offline-only settings require the VM to be **Off**. The script stops with a
   message if it is running; `-Force` stops it automatically.
@@ -88,7 +112,7 @@ resets the flag, so **re-run this after `wsl --shutdown`**.
 
 ### `scripts/wsl/route-cyclops.sh`
 
-Creates static routes inside WSL to reach tcyclops (`10.0.0.0/24`) and cyclops
+Creates static routes inside WSL to reach tcyclops/dcyclops (`10.0.0.0/24`) and cyclops
 (`192.168.2.0/24`) via the (runtime-detected) Windows host gateway. Idempotent;
 run it by hand after a WSL restart.
 
