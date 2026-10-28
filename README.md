@@ -4,10 +4,15 @@ A repository with all my homelab scripts.
 
 Network layout referenced throughout:
 
-| Network          | Purpose                                         | Path                                       |
-| ---------------- | ----------------------------------------------- | ------------------------------------------ |
-| `10.0.0.0/24`    | tcyclops (test, `.2`) and dcyclops (dev, `.3`)  | Hyper-V **Homelab** internal vSwitch + NAT |
-| `192.168.2.0/24` | cyclops (production)                            | physical homelab LAN behind the host       |
+| Network          | Purpose              | Path                                          |
+| ---------------- | -------------------- | --------------------------------------------- |
+| `10.0.0.0/24`    | tcyclops (test, `.2`) | Hyper-V **Homelab** internal vSwitch          |
+| `10.0.1.0/24`    | dcyclops (dev, `.2`)  | Hyper-V **HomelabDev** internal vSwitch       |
+| `192.168.2.0/24` | cyclops (production) | physical homelab LAN behind the host          |
+
+Both Hyper-V switches reach the internet through one shared `HomelabNAT` on
+`10.0.0.0/16`. WinNAT allows only one NAT network per host, so the NAT covers
+every lab subnet rather than each switch having its own.
 
 | Host       | Role                                                                  |
 | ---------- | --------------------------------------------------------------------- |
@@ -66,9 +71,13 @@ Requires `wget`, `xorriso`, `gpg` (optional), and coreutils/`awk`
 > Requires an elevated (Administrator) PowerShell session for Hyper-V actions.
 
 Creates or reconciles the Generation 2 `tcyclops` (test) or `dcyclops` (dev) VM
-(Switch, NAT, VHD, CPU/nested-virt, TPM, Secure Boot off, MAC spoofing). Both
-share the **Homelab** switch and NAT; per-VM sizing lives in a table at the top
-of the script.
+(Switch, NAT, VHD, CPU/nested-virt, TPM, Secure Boot off, MAC spoofing). Each VM
+gets its own internal switch and subnet (see the network table above); per-VM
+sizing and networking live in a table at the top of the script.
+
+- On first run after upgrading, an existing `HomelabNAT` on `10.0.0.0/24` is
+  replaced with the `10.0.0.0/16` one, briefly interrupting NAT for running lab
+  VMs.
 
 ```ps1
 create-cyclops-vm.ps1 -VM <tcyclops|dcyclops> -IsoPath <AUTO INSTALL ISO> [-Force] [-Reinstall] [-Rebuild] [-Start] [-EnableGuestServiceInterface]
@@ -103,7 +112,7 @@ Enables IPv4 forwarding on the host vEthernet interfaces so WSL2 can route to
 Hyper-V VMs on the lab switch.
 
 ```ps1
-enable-interface-forwarding.ps1 [-SwitchName Homelab[,...]] [-SkipWsl]
+enable-interface-forwarding.ps1 [-SwitchName Homelab,HomelabDev[,...]] [-SkipWsl]
 ```
 
 The WSL adapter is discovered by pattern (works for both `vEthernet (WSL)` and
@@ -112,7 +121,7 @@ resets the flag, so **re-run this after `wsl --shutdown`**.
 
 ### `scripts/wsl/route-cyclops.sh`
 
-Creates static routes inside WSL to reach tcyclops/dcyclops (`10.0.0.0/24`) and cyclops
+Creates static routes inside WSL to reach tcyclops (`10.0.0.0/24`), dcyclops (`10.0.1.0/24`) and cyclops
 (`192.168.2.0/24`) via the (runtime-detected) Windows host gateway. Idempotent;
 run it by hand after a WSL restart.
 
