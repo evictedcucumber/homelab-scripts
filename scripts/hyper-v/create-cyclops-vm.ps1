@@ -29,10 +29,14 @@
     state. If the VM is running the script stops with a clear message; pass
     -Force to have it stopped automatically.
 
-    The install ISO is only attached and the DVD only made the first boot
-    device when the VM is first created, or when -Reinstall or -Rebuild is
-    given. This prevents a re-run from silently re-triggering the unattended
-    installer (which would wipe the disk) on an already-provisioned VM.
+    The install ISO is only attached, and the boot order only changed, when
+    the VM is first created, or when -Reinstall or -Rebuild is given. This
+    prevents a re-run from silently re-triggering the unattended installer
+    (which would wipe the disk) on an already-provisioned VM.
+
+    The ISO boots into the installer with no keypress, so a fresh VM boots
+    disk first: the blank disk falls through to the DVD for the install, and
+    the installed disk boots itself afterwards instead of reinstalling.
 
     -Rebuild (ephemeral VMs only) turns the VM off, removes it together with
     its checkpoints and its VHD directory, then creates it again from scratch
@@ -559,7 +563,7 @@ if ($disabledServices)
 }
 
 # ---------------------------------------------------------------------
-# DVD / ISO  (first-create or -Reinstall only)
+# DVD / ISO & Boot Order  (first-create, -Rebuild or -Reinstall only)
 # ---------------------------------------------------------------------
 
 $applyIso = $vmIsNew -or $Reinstall -or $Rebuild
@@ -588,10 +592,32 @@ if ($applyIso)
     }
 
     $dvdDrive = Get-VMDvdDrive -VMName $Name -ErrorAction SilentlyContinue | Select-Object -First 1
+    $diskDrive = Get-VMHardDiskDrive -VMName $Name -ErrorAction SilentlyContinue | Select-Object -First 1
 
-    if ($dvdDrive -and $PSCmdlet.ShouldProcess($Name, "Set first boot device to DVD drive"))
+    # The ISO boots straight into the unattended installer, and Hyper-V
+    # ignores the installer's eject, so a DVD-first VM would reinstall on
+    # every boot. A blank disk (new VM or -Rebuild) is therefore put first:
+    # it fails to boot and falls through to the DVD once, then boots itself
+    # after install. -Reinstall must boot the DVD over an existing OS, so it
+    # goes first there; the installer's grub-installer then registers its
+    # own UEFI entry ahead of it, so the installed system boots next time.
+    if ($Reinstall -and -not ($vmIsNew -or $Rebuild))
     {
-        Set-VMFirmware -VMName $Name -FirstBootDevice $dvdDrive
+        if ($dvdDrive -and $PSCmdlet.ShouldProcess($Name, "Set first boot device to DVD drive"))
+        {
+            Set-VMFirmware -VMName $Name -FirstBootDevice $dvdDrive
+        }
+    }
+    elseif ($dvdDrive -and $diskDrive)
+    {
+        if ($PSCmdlet.ShouldProcess($Name, "Set boot order: hard disk, DVD drive, then the rest"))
+        {
+            $rest = @((Get-VMFirmware -VMName $Name).BootOrder | Where-Object {
+                    $_.Device -and $_.Device.Id -ne $diskDrive.Id -and $_.Device.Id -ne $dvdDrive.Id
+                } | ForEach-Object { $_.Device })
+
+            Set-VMFirmware -VMName $Name -BootOrder (@($diskDrive, $dvdDrive) + $rest)
+        }
     }
 }
 else
