@@ -299,11 +299,19 @@ function Initialize-NetworkSwitch
     }
 
     $allNats = @(Get-NetNat -ErrorAction SilentlyContinue)
-    $ourNat = $allNats | Where-Object { $_.Name -eq $NatName }
+    $labSubnets = @($VMConfigs.Values | ForEach-Object { $_.Subnet })
 
-    # Never delete someone else's NAT; it would also block ours (one per host).
-    $foreignNat = $allNats | Where-Object {
-        $_.Name -ne $NatName -and
+    # Lab NATs: ours by name, plus any NAT on exactly one lab subnet. Older
+    # per-VM setups created those (e.g. a 10.0.0.0/24 NAT for tcyclops under
+    # another name); they are folded into the shared NAT.
+    $labNats = @($allNats | Where-Object {
+            $_.Name -eq $NatName -or $labSubnets -contains $_.InternalIPInterfaceAddressPrefix
+        })
+
+    $otherNats = @($allNats | Where-Object { $labNats -notcontains $_ })
+
+    # Never delete someone else's NAT; an overlapping one would also break ours.
+    $foreignNat = $otherNats | Where-Object {
         $_.InternalIPInterfaceAddressPrefix -and
         $_.InternalIPInterfaceAddressPrefix -notmatch ':' -and
         (Test-CidrOverlap $_.InternalIPInterfaceAddressPrefix $NatPrefix)
@@ -314,24 +322,27 @@ function Initialize-NetworkSwitch
         throw "Existing NAT '$($foreignNat.Name)' ($($foreignNat.InternalIPInterfaceAddressPrefix)) overlaps the lab range $NatPrefix. Remove or renumber it first; this script will not delete it."
     }
 
-    if ($ourNat -and $ourNat.InternalIPInterfaceAddressPrefix -eq $NatPrefix)
+    foreach ($other in $otherNats)
+    {
+        Write-Warning "Another NAT '$($other.Name)' ($($other.InternalIPInterfaceAddressPrefix)) exists. WinNAT supports only one NAT per host; multiple NATs leave it in an undefined state. Remove it if it is unused."
+    }
+
+    if ($labNats.Count -eq 1 -and $labNats[0].Name -eq $NatName -and $labNats[0].InternalIPInterfaceAddressPrefix -eq $NatPrefix)
     {
         Write-Host "NAT Network '$NatName' ($NatPrefix) already exists." -ForegroundColor Yellow
         return
     }
 
-    if ($ourNat)
+    foreach ($old in $labNats)
     {
-        if ($PSCmdlet.ShouldProcess($NatName, "Replace NAT Network prefix $($ourNat.InternalIPInterfaceAddressPrefix) with $NatPrefix"))
+        if ($PSCmdlet.ShouldProcess($old.Name, "Remove lab NAT ($($old.InternalIPInterfaceAddressPrefix)) to replace it with shared '$NatName' ($NatPrefix)"))
         {
-            Write-Host "NAT '$NatName' has prefix $($ourNat.InternalIPInterfaceAddressPrefix); replacing with $NatPrefix. This briefly interrupts NAT for running lab VMs." -ForegroundColor Yellow
-            Remove-NetNat -Name $NatName -Confirm:$false
-            New-NetNat `
-                -Name $NatName `
-                -InternalIPInterfaceAddressPrefix $NatPrefix | Out-Null
+            Write-Host "Removing NAT '$($old.Name)' ($($old.InternalIPInterfaceAddressPrefix)); replacing with '$NatName' ($NatPrefix). This briefly interrupts NAT for running lab VMs." -ForegroundColor Yellow
+            Remove-NetNat -Name $old.Name -Confirm:$false
         }
     }
-    elseif ($PSCmdlet.ShouldProcess($NatName, "Create NAT Network ($NatPrefix)"))
+
+    if ($PSCmdlet.ShouldProcess($NatName, "Create NAT Network ($NatPrefix)"))
     {
         Write-Host "Creating NAT Network '$NatName' ($NatPrefix)..." -ForegroundColor Cyan
         New-NetNat `
