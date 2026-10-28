@@ -31,12 +31,15 @@ available, the OpenPGP signature), injects `preseed.cfg` and `recipes/` from
 (defaults to the current directory).
 
 ```bash
-generate-debian-iso.sh <CONFIG DIRECTORY> [OUTPUT DIRECTORY] [BASE ISO]
+generate-debian-iso.sh <VM NAME | CONFIG DIRECTORY> [OUTPUT DIRECTORY] [BASE ISO]
 ```
 
-- `<CONFIG DIRECTORY>` must contain `preseed.cfg` and a `recipes/` directory.
-  One per VM lives under `scripts/iso/debian/preseeds/` (`tcyclops/`,
-  `dcyclops/`); they differ only in hostname and static IP.
+- `<VM NAME>` (`tcyclops` or `dcyclops`) selects the matching config under
+  `scripts/iso/debian/preseeds/`, e.g. `generate-debian-iso.sh dcyclops`. The
+  two differ only in hostname, static IP and gateway, which match the VM's
+  Hyper-V switch (see the network table above).
+- `<CONFIG DIRECTORY>` is any other directory containing `preseed.cfg` and a
+  `recipes/` directory.
 - The output ISO is named `<config dir name>-preseed-auto.iso` (e.g.
   `dcyclops-preseed-auto.iso`), so both VMs' ISOs can share a directory.
 - `[BASE ISO]` uses a local ISO instead of downloading. `<OUTPUT DIRECTORY>`
@@ -75,9 +78,11 @@ Creates or reconciles the Generation 2 `tcyclops` (test) or `dcyclops` (dev) VM
 gets its own internal switch and subnet (see the network table above); per-VM
 sizing and networking live in a table at the top of the script.
 
-- On first run after upgrading, an existing `HomelabNAT` on `10.0.0.0/24` is
-  replaced with the `10.0.0.0/16` one, briefly interrupting NAT for running lab
-  VMs.
+- On first run after upgrading, any existing NAT on exactly a lab subnet
+  (e.g. an older `10.0.0.0/24` NAT, whatever its name) is replaced with the
+  shared `HomelabNAT` on `10.0.0.0/16`, briefly interrupting NAT for running lab
+  VMs. A NAT that overlaps the lab range in any other way stops the script; any
+  other NAT only triggers a warning, since WinNAT supports one per host.
 
 ```ps1
 create-cyclops-vm.ps1 -VM <tcyclops|dcyclops> -IsoPath <AUTO INSTALL ISO> [-Force] [-Reinstall] [-Rebuild] [-Start] [-EnableGuestServiceInterface]

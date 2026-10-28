@@ -36,12 +36,30 @@ readonly PRESEED_ARGS='auto=true priority=critical file=/cdrom/preseed.cfg'
 readonly DEBIAN_CD_SIGNING_KEY='DF9B9C49EAA9298432589D76DA87E80D6294BE9B'
 readonly REQUIRE_GPG="${REQUIRE_GPG:-0}"
 readonly SKIP_GPG="${SKIP_GPG:-0}"
+# Per-VM config directories (tcyclops, dcyclops, ...) live next to this script.
+PRESEEDS_DIR="$(dirname -- "$(realpath -- "${BASH_SOURCE[0]}")")/preseeds"
+readonly PRESEEDS_DIR
+
+available_vms() {
+    local d names=()
+    for d in "$PRESEEDS_DIR"/*/; do
+        [[ -d "$d" ]] && names+=("$(basename -- "$d")")
+    done
+    if [[ ${#names[@]} -eq 0 ]]; then
+        printf 'none found'
+        return
+    fi
+    printf '%s' "${names[0]}"
+    printf ', %s' "${names[@]:1}"
+}
 
 usage() {
     cat <<EOF >&2
-Usage: $0 <config-directory> [output-directory] [iso-path]
+Usage: $0 <vm-name | config-directory> [output-directory] [iso-path]
 
 Arguments:
+  vm-name           Name of a config under ${PRESEEDS_DIR}/
+                    ($(available_vms))
   config-directory  Directory containing preseed.cfg and recipes/
   output-directory  Where to write <config-name>-preseed-auto.iso, where
                     <config-name> is the config directory's basename
@@ -79,7 +97,17 @@ if [[ $# -lt 1 || $# -gt 3 ]]; then
     usage
 fi
 
-CONFIG_DIR="$(realpath -- "$1")"
+# A bare name (no slash) that is not a local directory selects a VM config
+# under preseeds/.
+if [[ "$1" != */* && ! -d "$1" ]]; then
+    if [[ ! -d "$PRESEEDS_DIR/$1" ]]; then
+        log_error "Unknown VM '$1' (available: $(available_vms))"
+        exit 1
+    fi
+    CONFIG_DIR="$PRESEEDS_DIR/$1"
+else
+    CONFIG_DIR="$(realpath -- "$1")"
+fi
 if [[ ! -d "$CONFIG_DIR" ]]; then
     log_error "Config directory not found: $CONFIG_DIR"
     exit 1
